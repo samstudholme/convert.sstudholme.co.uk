@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Free Image, Document, Audio and Video Converter | Convert Locally</title>
+  <meta name="description" content="Convert images, documents, audio and video in your browser. Free, private and no uploads required.">
+  <link rel="canonical" href="https://convert.sstudholme.co.uk/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Free Image, Document, Audio and Video Converter | Convert Locally">
+  <meta property="og:description" content="Convert images, documents, audio and video in your browser. Free, private and no uploads required.">
+  <meta property="og:url" content="https://convert.sstudholme.co.uk/">
+  <meta property="og:image" content="https://convert.sstudholme.co.uk/og-image.jpg">
+  <link rel="stylesheet" href="styles.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Do my files stay on my device?","acceptedAnswer":{"@type":"Answer","text":"Yes. Conversion happens locally in your browser, so your files are never uploaded."}},{"@type":"Question","name":"Which conversions are supported?","acceptedAnswer":{"@type":"Answer","text":"Convert HEIC, HEIF or WebP images, images and documents to PDF, WAV to MP3, FLAC to WAV, and MOV to MP4."}},{"@type":"Question","name":"Does it work on mobile?","acceptedAnswer":{"@type":"Answer","text":"Yes. The converter works in modern mobile browsers, although large documents, audio and video files can take longer to process."}}]}
+  </script>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <p class="eyebrow">Private File Converter</p>
+      <h1>Convert images, documents, audio and video</h1>
+      <p class="intro">Private conversion. Your files never leave your device.</p>
+    </header>
+
+    <section class="converter" aria-labelledby="converter-title">
+      <h2 id="converter-title" class="sr-only">Convert files</h2>
+      <div id="drop-zone" class="drop-zone" tabindex="0" role="button" aria-controls="file-input" aria-describedby="file-help">
+        <p><strong id="drop-title">Drop HEIC or HEIF files here</strong></p>
+        <p class="muted">or</p>
+        <button id="choose-button" class="button button-secondary" type="button">Choose files</button>
+        <input id="file-input" class="sr-only" type="file" accept="image/*,audio/*,video/*,.heic,.heif,.webp,.jpg,.jpeg,.png,.wav,.flac,.mov,.docx,.pages" multiple>
+        <p id="file-help" class="help">Images, DOCX, Pages, WAV, FLAC and MOV files are supported</p>
+      </div>
+
+      <div class="controls">
+        <label class="converter-select-label" for="converter-select">Converter
+          <select id="converter-select">
+            <optgroup label="Image">
+              <option value="heic-jpg">HEIC / HEIF to JPG</option>
+              <option value="heic-png">HEIC / HEIF to PNG</option>
+              <option value="webp-jpg">WebP to JPG</option>
+              <option value="webp-png">WebP to PNG</option>
+              <option value="image-pdf">JPG / PNG / HEIC to PDF</option>
+            </optgroup>
+            <optgroup label="Document">
+              <option value="docx-pdf">Word DOCX to PDF</option>
+              <option value="pages-pdf">Apple Pages to PDF</option>
+            </optgroup>
+            <optgroup label="Audio">
+              <option value="wav-mp3">WAV to MP3</option>
+              <option value="flac-wav">FLAC to WAV</option>
+            </optgroup>
+            <optgroup label="Video">
+              <option value="mov-mp4">MOV to MP4</option>
+            </optgroup>
+          </select>
+        </label>
+        <p id="quality-note" class="quality-note">Full-quality JPG output</p>
+      
+      </div>
+
+      <p class="local-note">Processed locally in your browser — your files are never uploaded.</p>
+      <div id="global-error" class="error" role="alert" hidden></div>
+      <div class="actions">
+        <button id="convert-button" class="button button-primary" type="button" disabled>Convert files</button>
+        <button id="clear-button" class="button button-text" type="button" disabled>Clear all</button>
+      </div>
+      <ul id="file-list" class="file-list" aria-live="polite" aria-label="Selected files"></ul>
+    </section>
+
+    <section class="faq" aria-labelledby="faq-title">
+      <h2 id="faq-title">Frequently asked questions</h2>
+      <details>
+        <summary>Do my files stay on my device?</summary>
+        <p>Yes. Conversion happens locally in your browser, so your files are never uploaded.</p>
+      </details>
+      <details>
+        <summary>Which conversions are supported?</summary>
+        <p>HEIC, HEIF or WebP to JPG or PNG; JPG, PNG, HEIC, DOCX or compatible Pages files to PDF; WAV to MP3; FLAC to WAV; and MOV to MP4.</p>
+      </details>
+      <details>
+        <summary>Does it work on mobile?</summary>
+        <p>Yes. Modern mobile browsers are supported. Large documents, audio and video files may take longer and require more available memory.</p>
+      </details>
+    </section>
+    <footer class="footer">
+      <button id="cookie-settings" class="button button-text" type="button">Cookie settings</button>
+    </footer>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/docx-preview@0.3.6/dist/docx-preview.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js" defer></script>
+  <script src="script.js" defer></script>
+  <aside id="cookie-banner" class="cookie-banner" role="dialog" aria-modal="true" aria-labelledby="cookie-title" aria-describedby="cookie-description" hidden>
+    <div>
+      <h2 id="cookie-title">Your privacy choices</h2>
+      <p id="cookie-description">We use optional Google Analytics cookies to understand visits and improve this converter. They only load if you accept. Your files are never accessed or uploaded.</p>
+      <p class="cookie-detail">Google may receive device, browser and usage information. You can change your choice at any time. Read <a href="https://policies.google.com/privacy" rel="noopener noreferrer">Google’s Privacy Policy</a>.</p>
+    </div>
+    <div class="cookie-actions">
+      <button id="reject-analytics" class="button button-secondary" type="button">Reject analytics</button>
+      <button id="accept-analytics" class="button button-primary" type="button">Accept analytics</button>
+    </div>
+  </aside>
+</body>
+</html>
