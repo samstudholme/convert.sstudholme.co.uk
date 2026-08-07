@@ -98,6 +98,7 @@
   let items = [];
   let busy = false;
   let ffmpeg = null;
+  let activeFfmpegItem = null;
 
   const converters = {
     'heic-jpg': { inputLabel: 'HEIC or HEIF', extension: 'jpg', mime: 'image/jpeg', quality: 'Full-quality JPG output', engine: 'heic' },
@@ -107,9 +108,9 @@
     'image-pdf': { inputLabel: 'JPG, PNG or HEIC', extension: 'pdf', mime: 'application/pdf', quality: 'Original-size image PDF output', engine: 'image-pdf' },
     'docx-pdf': { inputLabel: 'Word DOCX', extension: 'pdf', mime: 'application/pdf', quality: 'Locally rendered PDF output', engine: 'docx' },
     'pages-pdf': { inputLabel: 'Apple Pages', extension: 'pdf', mime: 'application/pdf', quality: 'Uses the document’s embedded PDF preview', engine: 'pages' },
-    'wav-mp3': { inputLabel: 'WAV', extension: 'mp3', mime: 'audio/mpeg', quality: 'High-quality 320 kbps MP3 output', engine: 'ffmpeg', args: ['-c:a', 'libmp3lame', '-b:a', '320k'] },
-    'flac-wav': { inputLabel: 'FLAC', extension: 'wav', mime: 'audio/wav', quality: 'Lossless 24-bit WAV output', engine: 'ffmpeg', args: ['-c:a', 'pcm_s24le'] },
-    'mov-mp4': { inputLabel: 'MOV', extension: 'mp4', mime: 'video/mp4', quality: 'High-quality, mobile-compatible MP4 output', engine: 'ffmpeg', args: ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac', '-b:a', '256k', '-movflags', '+faststart'] }
+    'wav-mp3': { inputLabel: 'WAV', extension: 'mp3', mime: 'audio/mpeg', quality: 'High-quality 320 kbps MP3 output', engine: 'lame' },
+    'flac-wav': { inputLabel: 'FLAC', extension: 'wav', mime: 'audio/wav', quality: 'Lossless-quality 24-bit WAV output', engine: 'flac', args: ['-c:a', 'pcm_s24le'] },
+    'mov-mp4': { inputLabel: 'MOV', extension: 'mp4', mime: 'video/mp4', quality: 'Fast conversion when streams are MP4-compatible', engine: 'ffmpeg', fastArgs: ['-map', '0:v:0', '-map', '0:a?', '-c', 'copy', '-movflags', '+faststart'], args: ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '256k', '-movflags', '+faststart'] }
   };
 
   const heicBrandPattern = /^(heic|heix|hevc|hevx|heim|heis|hevm|hevs|mif1|msf1)$/;
@@ -340,17 +341,153 @@
     return preview.async('blob');
   }
 
+  function floatToPcm16(samples) {
+    const pcm = new Int16Array(samples.length);
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, samples[index]));
+      pcm[index] = sample < 0 ? sample * 32768 : sample * 32767;
+    }
+    return pcm;
+  }
+
+  async function resampleAudio(buffer, sampleRate) {
+    if (buffer.sampleRate === sampleRate && buffer.numberOfChannels <= 2) return buffer;
+    const OfflineContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (!OfflineContext) throw new Error('This browser cannot prepare the WAV audio for MP3 conversion.');
+    const channels = Math.min(2, buffer.numberOfChannels);
+    const context = new OfflineContext(channels, Math.ceil(buffer.duration * sampleRate), sampleRate);
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.connect(context.destination);
+    source.start();
+    return context.startRendering();
+  }
+
+  async function convertWavToMp3(item) {
+    if (!window.lamejs || typeof window.lamejs.Mp3Encoder !== 'function') {
+      throw new Error('The MP3 converter could not load.');
+    }
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error('This browser cannot decode WAV audio.');
+    const context = new AudioContextClass();
+    let stage = 'decode';
+    try {
+      const decoded = await context.decodeAudioData(await item.file.arrayBuffer());
+      const targetRate = Math.min(48000, decoded.sampleRate);
+      const audio = await resampleAudio(decoded, targetRate);
+      stage = 'encode';
+      const channels = Math.min(2, audio.numberOfChannels);
+      const left = floatToPcm16(audio.getChannelData(0));
+      const right = channels === 2 ? floatToPcm16(audio.getChannelData(1)) : null;
+      const encoder = new window.lamejs.Mp3Encoder(channels, audio.sampleRate, 320);
+      const chunks = [];
+      const blockSize = 1152;
+      for (let offset = 0; offset < left.length; offset += blockSize) {
+        const encoded = channels === 2
+          ? encoder.encodeBuffer(left.subarray(offset, offset + blockSize), right.subarray(offset, offset + blockSize))
+          : encoder.encodeBuffer(left.subarray(offset, offset + blockSize));
+        if (encoded.length) chunks.push(new Uint8Array(encoded));
+        if (offset % (blockSize * 100) === 0) {
+          item.status = `Converting… ${Math.round((offset / left.length) * 100)}%`;
+          render();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      }
+      const finalChunk = encoder.flush();
+      if (finalChunk.length) chunks.push(new Uint8Array(finalChunk));
+      return new Blob(chunks, { type: 'audio/mpeg' });
+    } catch (error) {
+      const message = new Error(stage === 'decode'
+        ? 'This browser could not decode the WAV file.'
+        : `MP3 encoding failed: ${error.message || 'unknown encoder error'}`);
+      message.userMessage = true;
+      throw message;
+    } finally {
+      if (typeof context.close === 'function') await context.close();
+    }
+  }
+
+  function audioBufferToWav24(audio) {
+    const bytesPerSample = 3;
+    const dataSize = audio.length * audio.numberOfChannels * bytesPerSample;
+    if (dataSize > 0xffffffff - 44) throw new Error('This FLAC file is too large for the WAV format.');
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+    const text = (offset, value) => [...value].forEach((character, index) => view.setUint8(offset + index, character.charCodeAt(0)));
+    text(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    text(8, 'WAVE');
+    text(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, audio.numberOfChannels, true);
+    view.setUint32(24, audio.sampleRate, true);
+    view.setUint32(28, audio.sampleRate * audio.numberOfChannels * bytesPerSample, true);
+    view.setUint16(32, audio.numberOfChannels * bytesPerSample, true);
+    view.setUint16(34, 24, true);
+    text(36, 'data');
+    view.setUint32(40, dataSize, true);
+    const channels = Array.from({ length: audio.numberOfChannels }, (_, index) => audio.getChannelData(index));
+    let offset = 44;
+    for (let frame = 0; frame < audio.length; frame += 1) {
+      for (let channel = 0; channel < channels.length; channel += 1) {
+        const sample = Math.max(-1, Math.min(1, channels[channel][frame]));
+        let value = Math.round(sample < 0 ? sample * 8388608 : sample * 8388607);
+        if (value < 0) value += 0x1000000;
+        view.setUint8(offset, value & 0xff);
+        view.setUint8(offset + 1, (value >> 8) & 0xff);
+        view.setUint8(offset + 2, (value >> 16) & 0xff);
+        offset += bytesPerSample;
+      }
+    }
+    return new Blob([buffer], { type: 'audio/wav' });
+  }
+
+  async function convertFlacToWav(item) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error('This browser cannot decode FLAC audio.');
+    const context = new AudioContextClass();
+    try {
+      item.status = 'Decoding FLAC locally…';
+      render();
+      const decoded = await context.decodeAudioData(await item.file.arrayBuffer());
+      item.status = 'Creating 24-bit WAV…';
+      render();
+      return audioBufferToWav24(decoded);
+    } catch (error) {
+      item.status = 'Loading fallback FLAC converter…';
+      render();
+      return convertWithFfmpeg(item, converters['flac-wav']);
+    } finally {
+      if (typeof context.close === 'function') await context.close();
+    }
+  }
+
   async function getFfmpeg() {
-    if (!window.FFmpeg || typeof window.FFmpeg.createFFmpeg !== 'function') {
-      throw new Error('The audio and video converter could not load.');
+    if (!window.FFmpegWASM || typeof window.FFmpegWASM.FFmpeg !== 'function') {
+      throw new Error('The local video converter wrapper did not load.');
     }
     if (!ffmpeg) {
-      ffmpeg = window.FFmpeg.createFFmpeg({
-        log: false,
-        corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
+      ffmpeg = new window.FFmpegWASM.FFmpeg();
+      ffmpeg.on('progress', ({ progress }) => {
+        if (activeFfmpegItem && Number.isFinite(progress) && progress >= 0) {
+          activeFfmpegItem.status = `Converting… ${Math.min(99, Math.round(progress * 100))}%`;
+          render();
+        }
       });
     }
-    if (!ffmpeg.isLoaded()) await ffmpeg.load();
+    if (!ffmpeg.loaded) {
+      const coreBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+      const localBlobUrl = async (url, mime) => {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`The video processing core returned HTTP ${response.status}.`);
+        return URL.createObjectURL(new Blob([await response.arrayBuffer()], { type: mime }));
+      };
+      await ffmpeg.load({
+        coreURL: await localBlobUrl(`${coreBase}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await localBlobUrl(`${coreBase}/ffmpeg-core.wasm`, 'application/wasm')
+      });
+    }
     return ffmpeg;
   }
 
@@ -360,20 +497,30 @@
     const sourceExtension = item.file.name.includes('.') ? item.file.name.split('.').pop() : 'bin';
     const inputName = `input-${token}.${sourceExtension}`;
     const outputName = `output-${token}.${converter.extension}`;
-    engine.setProgress(({ ratio }) => {
-      if (Number.isFinite(ratio) && ratio >= 0) {
-        item.status = `Converting… ${Math.min(99, Math.round(ratio * 100))}%`;
-        render();
-      }
-    });
+    activeFfmpegItem = item;
     try {
-      engine.FS('writeFile', inputName, await window.FFmpeg.fetchFile(item.file));
-      await engine.run('-i', inputName, ...converter.args, outputName);
-      const data = engine.FS('readFile', outputName);
+      await engine.writeFile(inputName, new Uint8Array(await item.file.arrayBuffer()));
+      let exitCode;
+      if (converter.fastArgs) {
+        item.status = 'Fast conversion without re-encoding…';
+        render();
+        exitCode = await engine.exec(['-i', inputName, ...converter.fastArgs, outputName]);
+        if (exitCode !== 0) {
+          try { await engine.deleteFile(outputName); } catch (error) { /* No partial output was created. */ }
+          item.status = 'Streams need re-encoding…';
+          render();
+          exitCode = await engine.exec(['-i', inputName, ...converter.args, outputName]);
+        }
+      } else {
+        exitCode = await engine.exec(['-i', inputName, ...converter.args, outputName]);
+      }
+      if (exitCode !== 0) throw new Error(`Video conversion stopped with code ${exitCode}.`);
+      const data = await engine.readFile(outputName);
       return new Blob([data.buffer], { type: converter.mime });
     } finally {
-      try { engine.FS('unlink', inputName); } catch (error) { /* Input was not written. */ }
-      try { engine.FS('unlink', outputName); } catch (error) { /* Conversion did not finish. */ }
+      activeFfmpegItem = null;
+      try { await engine.deleteFile(inputName); } catch (error) { /* Input was not written. */ }
+      try { await engine.deleteFile(outputName); } catch (error) { /* Conversion did not finish. */ }
     }
   }
 
@@ -407,8 +554,14 @@
           item.status = 'Reading embedded PDF preview…';
           render();
           item.blob = await convertPagesToPdf(item);
+        } else if (converter.engine === 'lame') {
+          item.status = 'Decoding WAV locally…';
+          render();
+          item.blob = await convertWavToMp3(item);
+        } else if (converter.engine === 'flac') {
+          item.blob = await convertFlacToWav(item);
         } else {
-          item.status = ffmpeg && ffmpeg.isLoaded() ? 'Converting…' : 'Loading local converter…';
+          item.status = ffmpeg && ffmpeg.loaded ? 'Converting…' : 'Loading local converter…';
           render();
           item.blob = await convertWithFfmpeg(item, converter);
         }
@@ -421,6 +574,8 @@
       } catch (error) {
         item.error = error && error.userMessage
           ? error.message
+          : converter.engine === 'ffmpeg'
+            ? `MOV conversion failed: ${error.message || 'unknown video error'}`
           : error && /could not load/i.test(error.message)
           ? `${error.message} Check your connection, then refresh the page.`
           : 'Could not convert this file. It may be damaged, unsupported or too large for this device.';

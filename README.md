@@ -25,7 +25,7 @@ All processing happens locally in the browser. Files are never uploaded to a ser
 
 ## Technology
 
-The site uses plain HTML, CSS and JavaScript. Image and PDF conversion uses heic2any, jsPDF, docx-preview, html2canvas and JSZip; audio and video conversion uses FFmpeg WebAssembly. Everything runs locally in the browser. It has no backend, upload endpoint, accounts, database or build process.
+The site uses plain HTML, CSS and JavaScript. Image and PDF conversion uses heic2any, jsPDF, docx-preview, html2canvas and JSZip; audio uses the browser audio decoder and lamejs; video conversion uses FFmpeg WebAssembly. Everything runs locally in the browser. It has no backend, upload endpoint, accounts, database or build process.
 
 ## Run locally
 
@@ -62,6 +62,7 @@ The consent choice is stored locally for 180 days. A suitable privacy notice ide
 - An internet connection is required to load the conversion libraries from jsDelivr. Files themselves are never sent to jsDelivr or any other server.
 - Browsers may request permission before allowing multiple automatic downloads.
 - Conversion performance can vary with browser, device and file size. Large videos may exceed the memory available to a mobile browser.
+- MOV files with MP4-compatible streams are remuxed without re-encoding for much faster conversion. Other MOV codecs fall back to high-quality re-encoding.
 - Word conversion is a browser-rendered approximation and complex layouts may differ from Microsoft Word.
 - Pages conversion requires a PDF preview embedded in the `.pages` package. Not every Pages document contains one.
 
